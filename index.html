@@ -1,0 +1,1688 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>3D 跳動發光愛心</title>
+  <style>
+    :root { color-scheme: dark; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      overflow: hidden;
+      background: #020612;
+      font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      display: block;
+      background: transparent;
+    }
+
+    #overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      background: #020612;
+      color: rgba(255,255,255,0.92);
+    }
+
+    #overlay.hide {
+      opacity: 0;
+      transition: opacity 300ms ease;
+      pointer-events: none;
+    }
+
+    #overlay .box {
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(2, 8, 20, 0.45);
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(10px);
+      text-align: center;
+      max-width: min(520px, calc(100vw - 28px));
+      line-height: 1.5;
+    }
+
+    #overlay .title {
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+    }
+
+    #overlay .desc {
+      margin-top: 6px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.72);
+      white-space: pre-line;
+    }
+
+    /* 避免選取拖曳 */
+    * { -webkit-user-select: none; user-select: none; }
+  </style>
+
+  <!--
+    Module 版本（不依賴 importmap）：
+    - 直接用 esm.sh 匯入 three 與 examples/jsm addons
+    - iOS Safari/Chrome 對 importmap 支援不完整時，也能正常載入
+  -->
+</head>
+<body>
+  <div id="overlay" role="status" aria-live="polite">
+    <div class="box">
+      <div class="title">載入中…</div>
+      <div class="desc">正在載入 3D 模組</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const overlay = document.getElementById("overlay");
+      if (!overlay) return;
+
+      window.setTimeout(() => {
+        if (window.__HEART_OK__ || window.__HEART_FAILED__) return;
+
+        const tried = Array.isArray(window.__HEART_CDNS_TRIED__) && window.__HEART_CDNS_TRIED__.length
+          ? window.__HEART_CDNS_TRIED__
+          : ["esm.sh", "jsdelivr"];
+
+        const titleEl = overlay.querySelector(".title");
+        const descEl = overlay.querySelector(".desc");
+        if (titleEl) titleEl.textContent = "3D 模組載入逾時";
+        if (descEl) descEl.textContent = `3D 模組載入逾時：仍無法連線到 CDN（${tried.join("、")}）。請確認網路環境或稍後再試。`;
+      }, 15000);
+    })();
+  </script>
+
+  <script type="module">
+    const overlayEl = document.getElementById("overlay");
+
+    function setOverlayText(title, desc) {
+      if (!overlayEl) return;
+      const titleEl = overlayEl.querySelector(".title");
+      const descEl = overlayEl.querySelector(".desc");
+      if (titleEl) titleEl.textContent = title;
+      if (descEl) descEl.textContent = desc;
+    }
+
+    function showOverlayError(triedNames) {
+      window.__HEART_FAILED__ = true;
+      const triedText = (Array.isArray(triedNames) && triedNames.length)
+        ? triedNames.join("、")
+        : "esm.sh、jsdelivr";
+
+      setOverlayText(
+        "3D 模組載入失敗",
+        `3D 模組載入失敗：無法載入 CDN（${triedText}）。請確認網路環境或稍後再試。`
+      );
+    }
+
+    function appendOverlayErrorMessage(err) {
+      if (!overlayEl) return;
+      const descEl = overlayEl.querySelector(".desc");
+      if (!descEl) return;
+
+      const msg = err && err.message ? String(err.message) : "";
+      if (!msg) return;
+
+      const shortMsg = msg.length > 160 ? `${msg.slice(0, 160)}…` : msg;
+      descEl.textContent += `\n錯誤：${shortMsg}`;
+    }
+
+    const CDN_FALLBACKS = [
+      {
+        name: "esm.sh",
+        three: "https://esm.sh/three@0.182.0",
+        effectComposer: "https://esm.sh/three@0.182.0/examples/jsm/postprocessing/EffectComposer.js",
+        renderPass: "https://esm.sh/three@0.182.0/examples/jsm/postprocessing/RenderPass.js",
+        unrealBloomPass: "https://esm.sh/three@0.182.0/examples/jsm/postprocessing/UnrealBloomPass.js",
+        outputPass: "https://esm.sh/three@0.182.0/examples/jsm/postprocessing/OutputPass.js",
+      },
+      {
+        name: "jsdelivr",
+        three: "https://cdn.jsdelivr.net/npm/three@0.182.0/+esm",
+        effectComposer: "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/postprocessing/EffectComposer.js/+esm",
+        renderPass: "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/postprocessing/RenderPass.js/+esm",
+        unrealBloomPass: "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/postprocessing/UnrealBloomPass.js/+esm",
+        outputPass: "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/postprocessing/OutputPass.js/+esm",
+      },
+    ];
+
+    async function importWithTimeout(url, timeoutMs) {
+      const p = import(url);
+      p.catch(() => {});
+
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error(`Timeout while importing: ${url}`)), timeoutMs);
+      });
+
+      const result = await Promise.race([p, timeoutPromise]);
+      window.clearTimeout(timeoutId);
+      return result;
+    }
+
+    async function loadThreeModules() {
+      const tried = [];
+      window.__HEART_CDNS_TRIED__ = tried;
+
+      const timeoutMs = 5500;
+
+      for (const cdn of CDN_FALLBACKS) {
+        tried.push(cdn.name);
+        setOverlayText("載入中…", `正在嘗試載入 3D 模組（${cdn.name}）`);
+
+        try {
+          const [
+            THREE,
+            { EffectComposer },
+            { RenderPass },
+            { UnrealBloomPass },
+            { OutputPass },
+          ] = await Promise.all([
+            importWithTimeout(cdn.three, timeoutMs),
+            importWithTimeout(cdn.effectComposer, timeoutMs),
+            importWithTimeout(cdn.renderPass, timeoutMs),
+            importWithTimeout(cdn.unrealBloomPass, timeoutMs),
+            importWithTimeout(cdn.outputPass, timeoutMs),
+          ]);
+
+          return { THREE, EffectComposer, RenderPass, UnrealBloomPass, OutputPass };
+        } catch (err) {
+          console.warn(`[heart-3d] CDN 失敗：${cdn.name}`, err);
+        }
+      }
+
+      showOverlayError(tried);
+      throw new Error(`Failed to load three modules from: ${tried.join(", ")}`);
+    }
+
+    (async () => {
+      const isQA = new URL(location.href).searchParams.get("qa") === "1";
+
+      if (isQA) {
+        window.__HEART_OK__ = true;
+
+        const titleEl = overlayEl ? overlayEl.querySelector(".title") : null;
+        const descEl = overlayEl ? overlayEl.querySelector(".desc") : null;
+
+        if (titleEl) titleEl.textContent = "QA 模式";
+        if (descEl) descEl.style.whiteSpace = "pre";
+        if (descEl) descEl.textContent = "計算中…";
+
+        const startedAt = performance.now();
+
+        const rand = (() => {
+          let seed = 1337;
+          return () => {
+            seed |= 0;
+            seed = (seed + 0x6D2B79F5) | 0;
+            let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+        })();
+
+        const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+        const lerp = (a, b, t) => a + (b - a) * t;
+
+        const normalize2 = (x, y) => {
+          const inv = 1 / Math.max(1e-6, Math.hypot(x, y));
+          return [x * inv, y * inv];
+        };
+
+        const rotate2D = (x, y, angle) => {
+          const c = Math.cos(angle);
+          const s = Math.sin(angle);
+          return [x * c - y * s, x * s + y * c];
+        };
+
+        const OUTWARD_MAX = {
+          outerDust: 4.2,
+          fill: 8.0,
+          edge: 2.2,
+          sparkle: 2.6,
+        };
+
+        const ANGLE_SPREAD = 0.55;
+        const FILL_ACCEPT_EXP = 1.9;
+        const FILL_MIN_ACCEPT = 0.28;
+
+        const HEARTBEAT = {
+          PERIOD: 1.45,
+
+          LUB_MU: 0.11,
+          LUB_RISE: 0.030,
+          LUB_DECAY: 0.075,
+          LUB_GAIN: 1.20,
+
+          DUB_MU: 0.26,
+          DUB_RISE: 0.040,
+          DUB_DECAY: 0.095,
+          DUB_GAIN: 0.78,
+
+          OUTWARD_POW: 0.75,
+        };
+
+        function smoothstep01(v) { return v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v); }
+
+        function spike(x, mu, rise, decay) {
+          const r = smoothstep01((x - (mu - rise)) / rise);
+          const d = Math.exp(-Math.max(0, x - mu) / decay);
+          return r * d;
+        }
+
+        function computePulse(t) {
+          const x = (t % HEARTBEAT.PERIOD) / HEARTBEAT.PERIOD;
+          const lub = spike(x, HEARTBEAT.LUB_MU, HEARTBEAT.LUB_RISE, HEARTBEAT.LUB_DECAY);
+          const dub = spike(x, HEARTBEAT.DUB_MU, HEARTBEAT.DUB_RISE, HEARTBEAT.DUB_DECAY);
+          const kick = Math.min(1, HEARTBEAT.LUB_GAIN * lub + HEARTBEAT.DUB_GAIN * dub);
+          const outward = Math.pow(kick, HEARTBEAT.OUTWARD_POW);
+          const dirMix = 0.85 * outward;
+          return { kick, outward, dirMix };
+        }
+
+        const outlineCount = 520;
+        const outline = new Array(outlineCount);
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+
+        for (let i = 0; i < outlineCount; i++) {
+          const a = (i / outlineCount) * Math.PI * 2;
+          const x = 16 * Math.pow(Math.sin(a), 3);
+          const y = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a);
+          outline[i] = { x, y };
+
+          minX = Math.min(minX, x);
+          maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+        }
+
+        const centerX = (minX + maxX) * 0.5;
+        const centerY = (minY + maxY) * 0.5;
+
+        minX = Infinity;
+        maxX = -Infinity;
+        minY = Infinity;
+        maxY = -Infinity;
+
+        for (let i = 0; i < outlineCount; i++) {
+          outline[i].x -= centerX;
+          outline[i].y -= centerY;
+
+          minX = Math.min(minX, outline[i].x);
+          maxX = Math.max(maxX, outline[i].x);
+          minY = Math.min(minY, outline[i].y);
+          maxY = Math.max(maxY, outline[i].y);
+        }
+
+        let fillMaxR = 0;
+        for (let i = 0; i < outlineCount; i++) {
+          fillMaxR = Math.max(fillMaxR, Math.hypot(outline[i].x, outline[i].y));
+        }
+
+        function isPointInPolygon(x, y, poly) {
+          let inside = false;
+          for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i].x, yi = poly[i].y;
+            const xj = poly[j].x, yj = poly[j].y;
+            const intersect = ((yi > y) !== (yj > y))
+              && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+          }
+          return inside;
+        }
+
+        function sampleInHeart2D() {
+          for (let tries = 0; tries < 900; tries++) {
+            const x = lerp(minX, maxX, rand());
+            const y = lerp(minY, maxY, rand());
+            if (isPointInPolygon(x, y, outline)) return [x, y];
+          }
+          return [0, 0];
+        }
+
+        function makeLayer(count) {
+          return {
+            count,
+            basePos: new Float32Array(count * 2),
+            baseDir: new Float32Array(count * 2),
+            rotDir: new Float32Array(count * 2),
+            amp: new Float32Array(count),
+          };
+        }
+
+        const counts = {
+          heartFill: 1400,
+          heartEdge: outlineCount,
+          outerDust: 1200,
+          sparkle: 420,
+        };
+
+        const heartFill = makeLayer(counts.heartFill);
+        const heartEdge = makeLayer(counts.heartEdge);
+        const outerDust = makeLayer(counts.outerDust);
+        const sparkle = makeLayer(counts.sparkle);
+
+        for (let i = 0; i < heartFill.count; i++) {
+          let px = 0;
+          let py = 0;
+
+          for (let tries = 0; tries < 800; tries++) {
+            [px, py] = sampleInHeart2D();
+            const rNorm = fillMaxR > 0 ? Math.min(1, Math.hypot(px, py) / fillMaxR) : 0;
+            const acceptProb = FILL_MIN_ACCEPT + (1 - FILL_MIN_ACCEPT) * Math.pow(rNorm, FILL_ACCEPT_EXP);
+            if (rand() < acceptProb) break;
+          }
+
+          heartFill.basePos[i * 2 + 0] = px;
+          heartFill.basePos[i * 2 + 1] = py;
+
+          const r = Math.hypot(px, py);
+          let dx = 0;
+          let dy = 0;
+
+          if (r < 1e-6) {
+            const a = rand() * Math.PI * 2;
+            dx = Math.cos(a);
+            dy = Math.sin(a);
+          } else {
+            dx = px / r;
+            dy = py / r;
+          }
+
+          heartFill.baseDir[i * 2 + 0] = dx;
+          heartFill.baseDir[i * 2 + 1] = dy;
+
+          const ang = (rand() * 2 - 1) * ANGLE_SPREAD;
+          const [rdx, rdy] = rotate2D(dx, dy, ang);
+          heartFill.rotDir[i * 2 + 0] = rdx;
+          heartFill.rotDir[i * 2 + 1] = rdy;
+
+          const rNorm = fillMaxR > 0 ? Math.min(1, r / fillMaxR) : 0;
+          heartFill.amp[i] = (0.20 + 0.80 * Math.pow(rNorm, 1.2)) * (0.55 + 0.45 * rand());
+        }
+
+        const edgeJitter = 0.26;
+
+        for (let i = 0; i < outlineCount; i++) {
+          const prev = outline[(i - 1 + outlineCount) % outlineCount];
+          const curr = outline[i];
+          const next = outline[(i + 1) % outlineCount];
+
+          const tx = next.x - prev.x;
+          const ty = next.y - prev.y;
+          const invLen = 1 / Math.max(1e-6, Math.hypot(tx, ty));
+
+          let nx = -ty * invLen;
+          let ny = tx * invLen;
+
+          if (nx * curr.x + ny * curr.y < 0) {
+            nx = -nx;
+            ny = -ny;
+          }
+
+          const j = (rand() - 0.5) * 2 * edgeJitter;
+
+          heartEdge.basePos[i * 2 + 0] = curr.x + nx * j;
+          heartEdge.basePos[i * 2 + 1] = curr.y + ny * j;
+
+          heartEdge.baseDir[i * 2 + 0] = nx;
+          heartEdge.baseDir[i * 2 + 1] = ny;
+
+          const ang = (rand() * 2 - 1) * ANGLE_SPREAD;
+          const [rdx, rdy] = rotate2D(nx, ny, ang);
+
+          heartEdge.rotDir[i * 2 + 0] = rdx;
+          heartEdge.rotDir[i * 2 + 1] = rdy;
+
+          heartEdge.amp[i] = 0.20 + 0.80 * Math.pow(rand(), 1.25);
+        }
+
+        const dustMin = 0.55;
+        const dustMax = 5.6;
+        const dustPow = 2.2;
+
+        const pickFillChance = heartFill.count / (heartFill.count + outlineCount);
+
+        for (let i = 0; i < outerDust.count; i++) {
+          const pickFill = rand() < pickFillChance;
+
+          const baseArr = pickFill ? heartFill.basePos : heartEdge.basePos;
+          const baseCount = pickFill ? heartFill.count : outlineCount;
+          const si = Math.floor(rand() * baseCount) * 2;
+
+          const bx = baseArr[si + 0];
+          const by = baseArr[si + 1];
+
+          const a = rand() * Math.PI * 2;
+          const dx = Math.cos(a);
+          const dy = Math.sin(a);
+
+          const r = dustMin + (dustMax - dustMin) * Math.pow(rand(), dustPow);
+          const jitter = (rand() - 0.5) * 0.22;
+
+          const px = bx + dx * (r + jitter);
+          const py = by + dy * (r + jitter);
+
+          outerDust.basePos[i * 2 + 0] = px;
+          outerDust.basePos[i * 2 + 1] = py;
+
+          const [ndx, ndy] = normalize2(px, py);
+          outerDust.baseDir[i * 2 + 0] = ndx;
+          outerDust.baseDir[i * 2 + 1] = ndy;
+
+          const ang = (rand() * 2 - 1) * ANGLE_SPREAD;
+          const [rdx, rdy] = rotate2D(ndx, ndy, ang);
+
+          outerDust.rotDir[i * 2 + 0] = rdx;
+          outerDust.rotDir[i * 2 + 1] = rdy;
+
+          outerDust.amp[i] = 0.25 + 0.75 * Math.pow(rand(), 0.70);
+        }
+
+        for (let i = 0; i < sparkle.count; i++) {
+          const edgeIndex = Math.floor(rand() * outlineCount);
+
+          const outDx = heartEdge.baseDir[edgeIndex * 2 + 0];
+          const outDy = heartEdge.baseDir[edgeIndex * 2 + 1];
+
+          sparkle.baseDir[i * 2 + 0] = outDx;
+          sparkle.baseDir[i * 2 + 1] = outDy;
+
+          const ang = (rand() * 2 - 1) * ANGLE_SPREAD;
+          const [rdx, rdy] = rotate2D(outDx, outDy, ang);
+
+          sparkle.rotDir[i * 2 + 0] = rdx;
+          sparkle.rotDir[i * 2 + 1] = rdy;
+
+          const bx = heartEdge.basePos[edgeIndex * 2 + 0];
+          const by = heartEdge.basePos[edgeIndex * 2 + 1];
+
+          const a = rand() * Math.PI * 2;
+          const dx = Math.cos(a);
+          const dy = Math.sin(a);
+
+          const r = 0.10 + rand() * 0.46;
+          const jitter = (rand() - 0.5) * 0.10;
+
+          sparkle.basePos[i * 2 + 0] = bx + dx * (r + jitter);
+          sparkle.basePos[i * 2 + 1] = by + dy * (r + jitter);
+
+          sparkle.amp[i] = 0.20 + 0.80 * Math.pow(rand(), 1.10);
+        }
+
+        function computePositions(layer, outwardMax, pulseInfo) {
+          const { outward, dirMix } = pulseInfo;
+          const out = new Float32Array(layer.count * 2);
+
+          for (let i = 0; i < layer.count; i++) {
+            const bdx = layer.baseDir[i * 2 + 0];
+            const bdy = layer.baseDir[i * 2 + 1];
+            const rdx = layer.rotDir[i * 2 + 0];
+            const rdy = layer.rotDir[i * 2 + 1];
+
+            let fx = bdx + (rdx - bdx) * dirMix;
+            let fy = bdy + (rdy - bdy) * dirMix;
+            const invLen = 1 / Math.max(1e-6, Math.hypot(fx, fy));
+            fx *= invLen;
+            fy *= invLen;
+
+            const amp = layer.amp[i] * outwardMax * outward;
+            out[i * 2 + 0] = layer.basePos[i * 2 + 0] + fx * amp;
+            out[i * 2 + 1] = layer.basePos[i * 2 + 1] + fy * amp;
+          }
+
+          return out;
+        }
+
+        const { tPeak, tValley } = (() => {
+          const tStart = 0;
+          const tEnd = 4;
+          const dt = 1 / 480;
+          const sampleCount = Math.floor((tEnd - tStart) / dt);
+
+          let tPeak = tStart;
+          let tValley = tStart;
+          let maxKick = -Infinity;
+          let minKick = Infinity;
+
+          for (let i = 0; i < sampleCount; i++) {
+            const tt = tStart + i * dt;
+            const { kick } = computePulse(tt);
+
+            if (kick > maxKick) {
+              maxKick = kick;
+              tPeak = tt;
+            }
+
+            if (kick < minKick) {
+              minKick = kick;
+              tValley = tt;
+            }
+          }
+
+          return { tPeak, tValley };
+        })();
+
+        const t0 = tPeak;
+        const t1 = tValley;
+
+        const pulse0 = computePulse(t0);
+        const pulse1 = computePulse(t1);
+
+        const frame0 = {
+          heartFill: computePositions(heartFill, OUTWARD_MAX.fill, pulse0),
+          heartEdge: computePositions(heartEdge, OUTWARD_MAX.edge, pulse0),
+          outerDust: computePositions(outerDust, OUTWARD_MAX.outerDust, pulse0),
+          sparkle: computePositions(sparkle, OUTWARD_MAX.sparkle, pulse0),
+        };
+
+        const frame1 = {
+          heartFill: computePositions(heartFill, OUTWARD_MAX.fill, pulse1),
+          heartEdge: computePositions(heartEdge, OUTWARD_MAX.edge, pulse1),
+          outerDust: computePositions(outerDust, OUTWARD_MAX.outerDust, pulse1),
+          sparkle: computePositions(sparkle, OUTWARD_MAX.sparkle, pulse1),
+        };
+
+        function avgAbsDelta(p0, p1) {
+          const n = Math.min(p0.length, p1.length) / 2;
+          let sum = 0;
+
+          for (let i = 0; i < n; i++) {
+            const dx = p1[i * 2 + 0] - p0[i * 2 + 0];
+            const dy = p1[i * 2 + 1] - p0[i * 2 + 1];
+            sum += (Math.abs(dx) + Math.abs(dy)) * 0.5;
+          }
+
+          return n ? sum / n : 0;
+        }
+
+        const canvasSize = 256;
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = canvasSize;
+
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = false;
+
+        const extent = fillMaxR + dustMax + OUTWARD_MAX.fill;
+        const scale = (canvasSize * 0.5 - 10) / Math.max(1e-6, extent);
+        const cx = canvasSize * 0.5;
+        const cy = canvasSize * 0.5;
+
+        function drawPoints(points, size) {
+          const half = (size - 1) * 0.5;
+
+          for (let i = 0; i < points.length; i += 2) {
+            const x = (cx + points[i + 0] * scale) - half;
+            const y = (cy - points[i + 1] * scale) - half;
+
+            const px = x | 0;
+            const py = y | 0;
+
+            if (px + size < 0 || py + size < 0 || px >= canvasSize || py >= canvasSize) continue;
+            ctx.fillRect(px, py, size, size);
+          }
+        }
+
+        function renderFrame(frame) {
+          ctx.clearRect(0, 0, canvasSize, canvasSize);
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, canvasSize, canvasSize);
+
+          ctx.fillStyle = "#fff";
+          drawPoints(frame.heartFill, 2);
+
+          ctx.fillStyle = "#ff7bd6";
+          drawPoints(frame.heartEdge, 2);
+
+          ctx.fillStyle = "#b23bff";
+          drawPoints(frame.outerDust, 1);
+
+          ctx.fillStyle = "#ffffff";
+          drawPoints(frame.sparkle, 2);
+
+          return ctx.getImageData(0, 0, canvasSize, canvasSize).data;
+        }
+
+        const img0 = renderFrame(frame0);
+        const img1 = renderFrame(frame1);
+
+        let changed = 0;
+        const total = canvasSize * canvasSize;
+        const threshold = 20;
+
+        for (let i = 0; i < img0.length; i += 4) {
+          const dr = Math.abs(img1[i + 0] - img0[i + 0]);
+          const dg = Math.abs(img1[i + 1] - img0[i + 1]);
+          const db = Math.abs(img1[i + 2] - img0[i + 2]);
+          const mean = (dr + dg + db) / 3;
+          if (mean > threshold) changed++;
+        }
+
+        const pulseAnalysis = (() => {
+          const tStart = 0;
+          const tEnd = 4;
+          const dt = 1 / 240;
+          const sampleCount = Math.floor((tEnd - tStart) / dt);
+          const threshold = 0.02;
+
+          let nonZeroCount = 0;
+          let estimatedBeatCount = 0;
+          let prevAbove = false;
+
+          for (let i = 0; i < sampleCount; i++) {
+            const tt = tStart + i * dt;
+            const { kick } = computePulse(tt);
+            const above = kick >= threshold;
+            if (above) nonZeroCount++;
+            if (!prevAbove && above) estimatedBeatCount++;
+            prevAbove = above;
+          }
+
+          return {
+            tStart,
+            tEnd,
+            dt,
+            sampleCount,
+            threshold,
+            nonZeroFraction: sampleCount ? nonZeroCount / sampleCount : 0,
+            estimatedBeatCount,
+          };
+        })();
+
+        const result = {
+          qa: true,
+          t0,
+          t1,
+          pulseAnalysis,
+          outward0: pulse0.outward,
+          outward1: pulse1.outward,
+          positionDelta: {
+            avgAbsDelta: {
+              heartFill: avgAbsDelta(frame0.heartFill, frame1.heartFill),
+              heartEdge: avgAbsDelta(frame0.heartEdge, frame1.heartEdge),
+              outerDust: avgAbsDelta(frame0.outerDust, frame1.outerDust),
+              sparkle: avgAbsDelta(frame0.sparkle, frame1.sparkle),
+            },
+          },
+          pixelDiff: {
+            threshold,
+            changedPercent: (changed / total) * 100,
+          },
+          ms: {
+            total: performance.now() - startedAt,
+          },
+        };
+
+        if (titleEl) titleEl.textContent = "QA 結果";
+        if (descEl) descEl.textContent = JSON.stringify(result, null, 2);
+
+        return;
+      }
+
+      const { THREE, EffectComposer, RenderPass, UnrealBloomPass, OutputPass } = await loadThreeModules();
+
+      function hideOverlay() {
+        if (!overlayEl) return;
+        overlayEl.classList.add("hide");
+        window.setTimeout(() => overlayEl.remove(), 380);
+      }
+
+      const isMobile = matchMedia("(max-width: 768px)").matches;
+      const dprCap = isMobile ? 1.1 : 1.4;
+      const ppScale = isMobile ? 0.72 : 0.80;
+
+      const COUNT_SCALE = 0.55;
+
+      const COUNTS = {
+        heartFill: Math.floor((isMobile ? 11000 : 20000) * COUNT_SCALE),
+        heartEdge: Math.floor((isMobile ? 2400 : 4200) * COUNT_SCALE),
+        outerDust: Math.floor((isMobile ? 7000 : 14000) * COUNT_SCALE),
+      };
+
+      // ---------- Renderer / Scene / Camera ----------
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x020612);
+
+      const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 200);
+      camera.position.set(0, 0.55, 4.6);
+      camera.lookAt(0, 0, 0);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.18;
+      renderer.setClearColor(0x020612, 1);
+      document.body.appendChild(renderer.domElement);
+
+      // ---------- Postprocessing (Bloom) ----------
+      const BLOOM = {
+        strength: 0.85,
+        radius: 0.18,
+        threshold: 0.74,
+      };
+
+      const composer = new EffectComposer(renderer);
+      composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap) * ppScale);
+      composer.addPass(new RenderPass(scene, camera));
+
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        BLOOM.strength,
+        BLOOM.radius,
+        BLOOM.threshold
+      );
+      composer.addPass(bloomPass);
+      composer.addPass(new OutputPass());
+
+      // ---------- Sprite ----------
+      function makeDotTexture({ size = 64 } = {}) {
+        const c = document.createElement("canvas");
+        c.width = c.height = size;
+
+        const ctx = c.getContext("2d");
+        ctx.clearRect(0, 0, size, size);
+
+        const r = size * 0.5;
+        const g = ctx.createRadialGradient(r, r, 0, r, r, r);
+        g.addColorStop(0, "rgba(255,255,255,1)");
+        g.addColorStop(0.4, "rgba(255,255,255,1)");
+        g.addColorStop(0.75, "rgba(255,255,255,0.25)");
+        g.addColorStop(1, "rgba(255,255,255,0)");
+
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, size, size);
+
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+        return tex;
+      }
+
+      function makeGlowTexture({ size = 128 } = {}) {
+        const c = document.createElement("canvas");
+        c.width = c.height = size;
+
+        const ctx = c.getContext("2d");
+        ctx.clearRect(0, 0, size, size);
+
+        const g = ctx.createRadialGradient(
+          size * 0.5,
+          size * 0.5,
+          0,
+          size * 0.5,
+          size * 0.5,
+          size * 0.5
+        );
+        g.addColorStop(0, "rgba(255,255,255,1)");
+        g.addColorStop(0.35, "rgba(255,255,255,0.55)");
+        g.addColorStop(1, "rgba(255,255,255,0)");
+
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, size, size);
+
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+        return tex;
+      }
+
+      const dotTex = makeDotTexture({ size: 64 });
+      const glowTex = makeGlowTexture({ size: 128 });
+
+      // ---------- Heart (2D shape) ----------
+      const heartShape = new THREE.Shape();
+      const x = 0, y = 0;
+
+      heartShape.moveTo(x + 5, y + 5);
+      heartShape.bezierCurveTo(x + 5, y + 5, x + 4, y, x, y);
+      heartShape.bezierCurveTo(x - 6, y, x - 6, y + 7, x - 6, y + 7);
+      heartShape.bezierCurveTo(x - 6, y + 11, x - 3, y + 15, x + 5, y + 19);
+      heartShape.bezierCurveTo(x + 12, y + 15, x + 16, y + 11, x + 16, y + 7);
+      heartShape.bezierCurveTo(x + 16, y + 7, x + 16, y, x + 10, y);
+      heartShape.bezierCurveTo(x + 7, y, x + 5, y + 5, x + 5, y + 5);
+
+      const outlinePolyRaw = heartShape.getSpacedPoints(520);
+      outlinePolyRaw.pop();
+      const outlinePoly = outlinePolyRaw.map((p) => new THREE.Vector2(p.x, p.y));
+
+      const outlineBoxRaw = new THREE.Box2().setFromPoints(outlinePoly);
+      const outlineCenter = outlineBoxRaw.getCenter(new THREE.Vector2());
+
+      for (let i = 0; i < outlinePoly.length; i++) {
+        outlinePoly[i].sub(outlineCenter);
+      }
+
+      const outlineBox = new THREE.Box2().setFromPoints(outlinePoly);
+
+      function isPointInPolygon(p, poly) {
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+          const xi = poly[i].x, yi = poly[i].y;
+          const xj = poly[j].x, yj = poly[j].y;
+          const intersect = ((yi > p.y) !== (yj > p.y))
+            && (p.x < (xj - xi) * (p.y - yi) / (yj - yi) + xi);
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      const MAX_TRIES_IN_POLY = 900;
+      const _v2 = new THREE.Vector2();
+
+      function sampleInHeart2D(out) {
+        for (let tries = 0; tries < MAX_TRIES_IN_POLY; tries++) {
+          out.set(
+            THREE.MathUtils.lerp(outlineBox.min.x, outlineBox.max.x, Math.random()),
+            THREE.MathUtils.lerp(outlineBox.min.y, outlineBox.max.y, Math.random())
+          );
+          if (isPointInPolygon(out, outlinePoly)) return out;
+        }
+
+        out.set(0, 0);
+        return out;
+      }
+
+      const heart = new THREE.Group();
+      heart.rotation.set(0, 0, Math.PI);
+      scene.add(heart);
+
+      const MOBILE_FIT = 0.75;
+      const baseScale = 0.108;
+      const heartScale = baseScale * (isMobile ? MOBILE_FIT : 1);
+      heart.scale.setScalar(heartScale);
+
+      // ---------- Colors (pink / magenta only; tiny hue jitter) ----------
+      const _c = new THREE.Color();
+      function writePinkColor(dst, ix, lightnessBase, lightnessJitter) {
+        const hue = THREE.MathUtils.degToRad(330 + (Math.random() - 0.5) * 16);
+        const h = (hue / (Math.PI * 2) + 1) % 1;
+        const s = 0.86 + Math.random() * 0.12;
+        const l = THREE.MathUtils.clamp(lightnessBase + (Math.random() - 0.5) * lightnessJitter, 0.32, 0.76);
+        _c.setHSL(h, s, l, THREE.SRGBColorSpace);
+        dst[ix + 0] = _c.r;
+        dst[ix + 1] = _c.g;
+        dst[ix + 2] = _c.b;
+      }
+
+      const ANGLE_SPREAD = 0.55;
+      const _rot2 = new Float32Array(2);
+
+      function rotate2D(x, y, angle, out = _rot2) {
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        out[0] = x * c - y * s;
+        out[1] = x * s + y * c;
+        return out;
+      }
+
+      // ---------- Layer A: heartFill (almost 2D) ----------
+      const heartFillCount = COUNTS.heartFill;
+      const heartFillGeo = new THREE.BufferGeometry();
+      const heartFillPos = new Float32Array(heartFillCount * 3);
+      const heartFillCol = new Float32Array(heartFillCount * 3);
+
+      const fillZJitter = 0.06;
+
+      let fillMaxR = 0;
+      for (let i = 0; i < outlinePoly.length; i++) {
+        fillMaxR = Math.max(fillMaxR, Math.hypot(outlinePoly[i].x, outlinePoly[i].y));
+      }
+
+      const FILL_ACCEPT_EXP = 1.9;
+      const FILL_MIN_ACCEPT = 0.28;
+
+      for (let i = 0; i < heartFillCount; i++) {
+        const ix = i * 3;
+
+        for (let tries = 0; tries < 2400; tries++) {
+          sampleInHeart2D(_v2);
+          const rNorm = fillMaxR > 0 ? Math.min(1, Math.hypot(_v2.x, _v2.y) / fillMaxR) : 0;
+          const acceptProb = FILL_MIN_ACCEPT + (1 - FILL_MIN_ACCEPT) * Math.pow(rNorm, FILL_ACCEPT_EXP);
+          if (Math.random() < acceptProb) break;
+        }
+
+        heartFillPos[ix + 0] = _v2.x;
+        heartFillPos[ix + 1] = _v2.y;
+        heartFillPos[ix + 2] = (Math.random() - 0.5) * fillZJitter;
+
+        const rNorm = fillMaxR > 0 ? Math.min(1, Math.hypot(_v2.x, _v2.y) / fillMaxR) : 0;
+        const fillLightnessBase = 0.55 + 0.06 * (1 - rNorm);
+        writePinkColor(heartFillCol, ix, fillLightnessBase, 0.18);
+      }
+
+      const heartFillPosAttr = new THREE.BufferAttribute(heartFillPos, 3);
+      heartFillPosAttr.setUsage(THREE.DynamicDrawUsage);
+      heartFillGeo.setAttribute("position", heartFillPosAttr);
+      heartFillGeo.setAttribute("color", new THREE.BufferAttribute(heartFillCol, 3));
+
+      const heartFillBasePos = heartFillPos.slice();
+      const heartFillDir = new Float32Array(heartFillCount * 2);
+      const heartFillRotDir = new Float32Array(heartFillCount * 2);
+      const heartFillAngle = new Float32Array(heartFillCount);
+      const heartFillAmp = new Float32Array(heartFillCount);
+
+      for (let i = 0; i < heartFillCount; i++) {
+        const ix = i * 3;
+        const px = heartFillBasePos[ix + 0];
+        const py = heartFillBasePos[ix + 1];
+        const r = Math.hypot(px, py);
+
+        let dx = 0;
+        let dy = 0;
+
+        if (r < 1e-6) {
+          const a = Math.random() * Math.PI * 2;
+          dx = Math.cos(a);
+          dy = Math.sin(a);
+        } else {
+          const invLen = 1 / r;
+          dx = px * invLen;
+          dy = py * invLen;
+        }
+
+        heartFillDir[i * 2 + 0] = dx;
+        heartFillDir[i * 2 + 1] = dy;
+
+        const ang = (Math.random() * 2 - 1) * ANGLE_SPREAD;
+        heartFillAngle[i] = ang;
+
+        const rDir = rotate2D(dx, dy, ang);
+        heartFillRotDir[i * 2 + 0] = rDir[0];
+        heartFillRotDir[i * 2 + 1] = rDir[1];
+
+        const rNorm = fillMaxR > 0 ? Math.min(1, r / fillMaxR) : 0;
+        heartFillAmp[i] = (0.20 + 0.80 * Math.pow(rNorm, 1.2)) * (0.55 + 0.45 * Math.random());
+      }
+
+      // Glow layer (soft sprite; additive; vertexColors stay pink)
+      const heartGlowMat = new THREE.PointsMaterial({
+        map: glowTex,
+        transparent: true,
+        opacity: isMobile ? 0.16 : 0.18,
+        alphaTest: 0.02,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        size: isMobile ? 0.12 : 0.13,
+        sizeAttenuation: true,
+        vertexColors: true,
+      });
+
+      const heartGlow = new THREE.Points(heartFillGeo, heartGlowMat);
+      heartGlow.frustumCulled = false;
+      heartGlow.renderOrder = 5;
+      heart.add(heartGlow);
+
+      const heartFillMat = new THREE.PointsMaterial({
+        map: dotTex,
+        transparent: true,
+        opacity: 0.78,
+        alphaTest: 0.15,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.NormalBlending,
+        size: isMobile ? 0.050 : 0.054,
+        sizeAttenuation: true,
+        vertexColors: true,
+      });
+
+      const heartFill = new THREE.Points(heartFillGeo, heartFillMat);
+      heartFill.frustumCulled = false;
+      heartFill.renderOrder = 10;
+      heart.add(heartFill);
+
+      // ---------- Layer B: heartEdge (outline + small jitter in/out) ----------
+      const EDGE_SAMPLE_COUNT = isMobile ? 2400 : 4200;
+      const heartEdgeCount = COUNTS.heartEdge;
+
+      const edgePointsRaw = heartShape.getSpacedPoints(EDGE_SAMPLE_COUNT);
+      edgePointsRaw.pop();
+
+      const edgePointsAll = edgePointsRaw.map((p) => new THREE.Vector2(p.x - outlineCenter.x, p.y - outlineCenter.y));
+
+      const edgePoints = new Array(heartEdgeCount);
+      const edgeIndices = new Uint32Array(heartEdgeCount);
+
+      for (let i = 0; i < heartEdgeCount; i++) {
+        const src = Math.floor(i * edgePointsAll.length / heartEdgeCount);
+        edgeIndices[i] = src;
+        edgePoints[i] = edgePointsAll[src];
+      }
+
+      const heartEdgeGeo = new THREE.BufferGeometry();
+      const heartEdgePos = new Float32Array(edgePoints.length * 3);
+      const heartEdgeCol = new Float32Array(edgePoints.length * 3);
+
+      const edgeJitter = 0.26;
+      const edgeZJitter = 0.04;
+
+      const heartEdgeOutDir = new Float32Array(edgePoints.length * 2);
+      const heartEdgeRotDir = new Float32Array(edgePoints.length * 2);
+      const heartEdgeAngle = new Float32Array(edgePoints.length);
+
+      for (let i = 0; i < edgePoints.length; i++) {
+        const ix = i * 3;
+
+        const src = edgeIndices[i];
+
+        const prev = edgePointsAll[(src - 1 + edgePointsAll.length) % edgePointsAll.length];
+        const curr = edgePointsAll[src];
+        const next = edgePointsAll[(src + 1) % edgePointsAll.length];
+
+        const tx = next.x - prev.x;
+        const ty = next.y - prev.y;
+        const invLen = 1 / Math.max(1e-6, Math.hypot(tx, ty));
+
+        let nx = -ty * invLen;
+        let ny = tx * invLen;
+
+        if (nx * curr.x + ny * curr.y < 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+
+        heartEdgeOutDir[i * 2 + 0] = nx;
+        heartEdgeOutDir[i * 2 + 1] = ny;
+
+        const ang = (Math.random() * 2 - 1) * ANGLE_SPREAD;
+        heartEdgeAngle[i] = ang;
+
+        const rDir = rotate2D(nx, ny, ang);
+        heartEdgeRotDir[i * 2 + 0] = rDir[0];
+        heartEdgeRotDir[i * 2 + 1] = rDir[1];
+
+        const j = (Math.random() - 0.5) * 2 * edgeJitter;
+
+        heartEdgePos[ix + 0] = curr.x + nx * j;
+        heartEdgePos[ix + 1] = curr.y + ny * j;
+        heartEdgePos[ix + 2] = (Math.random() - 0.5) * edgeZJitter;
+
+        writePinkColor(heartEdgeCol, ix, 0.62, 0.16);
+      }
+
+      const heartEdgePosAttr = new THREE.BufferAttribute(heartEdgePos, 3);
+      heartEdgePosAttr.setUsage(THREE.DynamicDrawUsage);
+      heartEdgeGeo.setAttribute("position", heartEdgePosAttr);
+      heartEdgeGeo.setAttribute("color", new THREE.BufferAttribute(heartEdgeCol, 3));
+
+      const heartEdgeBasePos = heartEdgePos.slice();
+      const heartEdgeAmp = new Float32Array(edgePoints.length);
+
+      for (let i = 0; i < edgePoints.length; i++) {
+        heartEdgeAmp[i] = 0.20 + 0.80 * Math.pow(Math.random(), 1.25);
+      }
+
+      const heartEdgeMat = new THREE.PointsMaterial({
+        map: dotTex,
+        transparent: true,
+        opacity: 0.68,
+        alphaTest: 0.18,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        size: isMobile ? 0.056 : 0.060,
+        sizeAttenuation: true,
+        vertexColors: true,
+      });
+
+      const heartEdge = new THREE.Points(heartEdgeGeo, heartEdgeMat);
+      heartEdge.frustumCulled = false;
+      heartEdge.renderOrder = 20;
+      heart.add(heartEdge);
+
+      // ---------- Layer C: outerDust (seed + random displacement; small more common) ----------
+      const outerDustCount = COUNTS.outerDust;
+      const outerDustGeo = new THREE.BufferGeometry();
+      const outerDustPos = new Float32Array(outerDustCount * 3);
+      const outerDustCol = new Float32Array(outerDustCount * 3);
+
+      const dustMin = 0.55;
+      const dustMax = isMobile ? 4.4 : 5.6;
+      const dustPow = 2.2;
+      const dustZJitter = 0.75;
+
+      const pickFillChance = heartFillCount / (heartFillCount + edgePoints.length);
+
+      for (let i = 0; i < outerDustCount; i++) {
+        const ix = i * 3;
+
+        const pickFill = Math.random() < pickFillChance;
+        const baseArr = pickFill ? heartFillPos : heartEdgeBasePos;
+        const baseCount = pickFill ? heartFillCount : edgePoints.length;
+        const si = Math.floor(Math.random() * baseCount) * 3;
+
+        const bx = baseArr[si + 0];
+        const by = baseArr[si + 1];
+        const bz = baseArr[si + 2];
+
+        const a = Math.random() * Math.PI * 2;
+        const zTilt = (Math.random() - 0.5) * 0.38;
+
+        const dx = Math.cos(a) * Math.cos(zTilt);
+        const dy = Math.sin(a) * Math.cos(zTilt);
+        const dz = Math.sin(zTilt);
+
+        const r = dustMin + (dustMax - dustMin) * Math.pow(Math.random(), dustPow);
+        const jitter = (Math.random() - 0.5) * 0.22;
+
+        outerDustPos[ix + 0] = bx + dx * (r + jitter);
+        outerDustPos[ix + 1] = by + dy * (r + jitter);
+        outerDustPos[ix + 2] = bz + dz * (r * 0.42) + (Math.random() - 0.5) * dustZJitter;
+
+        writePinkColor(outerDustCol, ix, 0.46, 0.22);
+      }
+
+      const outerDustPosAttr = new THREE.BufferAttribute(outerDustPos, 3);
+      outerDustPosAttr.setUsage(THREE.DynamicDrawUsage);
+      outerDustGeo.setAttribute("position", outerDustPosAttr);
+      outerDustGeo.setAttribute("color", new THREE.BufferAttribute(outerDustCol, 3));
+
+      const outerDustBasePos = outerDustPos.slice();
+      const outerDustDir = new Float32Array(outerDustCount * 2);
+      const outerDustRotDir = new Float32Array(outerDustCount * 2);
+      const outerDustAngle = new Float32Array(outerDustCount);
+      const outerDustAmp = new Float32Array(outerDustCount);
+
+      for (let i = 0; i < outerDustCount; i++) {
+        const ix = i * 3;
+        const px = outerDustBasePos[ix + 0];
+        const py = outerDustBasePos[ix + 1];
+        const invLen = 1 / Math.max(1e-6, Math.hypot(px, py));
+
+        const dx = px * invLen;
+        const dy = py * invLen;
+
+        outerDustDir[i * 2 + 0] = dx;
+        outerDustDir[i * 2 + 1] = dy;
+
+        const ang = (Math.random() * 2 - 1) * ANGLE_SPREAD;
+        outerDustAngle[i] = ang;
+
+        const rDir = rotate2D(dx, dy, ang);
+        outerDustRotDir[i * 2 + 0] = rDir[0];
+        outerDustRotDir[i * 2 + 1] = rDir[1];
+
+        outerDustAmp[i] = 0.25 + 0.75 * Math.pow(Math.random(), 0.70);
+      }
+
+      const outerDustMat = new THREE.PointsMaterial({
+        map: glowTex,
+        transparent: true,
+        opacity: isMobile ? 0.12 : 0.14,
+        alphaTest: 0.03,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        size: isMobile ? 0.052 : 0.055,
+        sizeAttenuation: true,
+        vertexColors: true,
+      });
+
+      const outerDust = new THREE.Points(outerDustGeo, outerDustMat);
+      outerDust.frustumCulled = false;
+      outerDust.renderOrder = 1;
+      heart.add(outerDust);
+
+      // ---------- Layer D: sparkle/glint (edge-only; animated color) ----------
+      const sparkleCount = Math.floor((isMobile ? 300 : 600) * COUNT_SCALE);
+      const sparkleGeo = new THREE.BufferGeometry();
+      const sparklePos = new Float32Array(sparkleCount * 3);
+      const sparkleCol = new Float32Array(sparkleCount * 3);
+      const sparkleTint = new Float32Array(sparkleCount * 3);
+      const sparklePhase = new Float32Array(sparkleCount);
+      const sparkleSpeed = new Float32Array(sparkleCount);
+      const sparkleOutDir = new Float32Array(sparkleCount * 2);
+      const sparkleRotDir = new Float32Array(sparkleCount * 2);
+      const sparkleAngle = new Float32Array(sparkleCount);
+      const sparkleEdgeIndex = new Uint16Array(sparkleCount);
+
+      for (let i = 0; i < sparkleCount; i++) {
+        const ix = i * 3;
+
+        const edgeIndex = Math.floor(Math.random() * edgePoints.length);
+        sparkleEdgeIndex[i] = edgeIndex;
+
+        const outDx = heartEdgeOutDir[edgeIndex * 2 + 0];
+        const outDy = heartEdgeOutDir[edgeIndex * 2 + 1];
+
+        sparkleOutDir[i * 2 + 0] = outDx;
+        sparkleOutDir[i * 2 + 1] = outDy;
+
+        const ang = (Math.random() * 2 - 1) * ANGLE_SPREAD;
+        sparkleAngle[i] = ang;
+
+        const rDir = rotate2D(outDx, outDy, ang);
+        sparkleRotDir[i * 2 + 0] = rDir[0];
+        sparkleRotDir[i * 2 + 1] = rDir[1];
+
+        const si = edgeIndex * 3;
+        const bx = heartEdgeBasePos[si + 0];
+        const by = heartEdgeBasePos[si + 1];
+        const bz = heartEdgeBasePos[si + 2];
+
+        const a = Math.random() * Math.PI * 2;
+        const zTilt = (Math.random() - 0.5) * 0.9;
+
+        const dx = Math.cos(a) * Math.cos(zTilt);
+        const dy = Math.sin(a) * Math.cos(zTilt);
+        const dz = Math.sin(zTilt);
+
+        const r = 0.10 + Math.random() * 0.46;
+        const jitter = (Math.random() - 0.5) * 0.10;
+
+        sparklePos[ix + 0] = bx + dx * (r + jitter);
+        sparklePos[ix + 1] = by + dy * (r + jitter);
+        sparklePos[ix + 2] = bz + dz * (r * 0.28);
+
+        const hue = THREE.MathUtils.degToRad(332 + (Math.random() - 0.5) * 10);
+        const h = (hue / (Math.PI * 2) + 1) % 1;
+        _c.setHSL(h, 0.35 + Math.random() * 0.25, 0.78 + Math.random() * 0.20, THREE.SRGBColorSpace);
+
+        sparkleTint[ix + 0] = _c.r;
+        sparkleTint[ix + 1] = _c.g;
+        sparkleTint[ix + 2] = _c.b;
+
+        sparkleCol[ix + 0] = 0;
+        sparkleCol[ix + 1] = 0;
+        sparkleCol[ix + 2] = 0;
+
+        sparklePhase[i] = Math.random() * Math.PI * 2;
+        sparkleSpeed[i] = 8 + Math.random() * 10;
+      }
+
+      const sparklePosAttr = new THREE.BufferAttribute(sparklePos, 3);
+      sparklePosAttr.setUsage(THREE.DynamicDrawUsage);
+      sparkleGeo.setAttribute("position", sparklePosAttr);
+
+      const sparkleColAttr = new THREE.BufferAttribute(sparkleCol, 3);
+      sparkleColAttr.setUsage(THREE.DynamicDrawUsage);
+      sparkleGeo.setAttribute("color", sparkleColAttr);
+
+      const sparkleBasePos = sparklePos.slice();
+      const sparkleAmp = new Float32Array(sparkleCount);
+
+      for (let i = 0; i < sparkleCount; i++) {
+        sparkleAmp[i] = 0.20 + 0.80 * Math.pow(Math.random(), 1.10);
+      }
+
+      const sparkleMat = new THREE.PointsMaterial({
+        map: dotTex,
+        transparent: true,
+        opacity: 0.92,
+        alphaTest: 0.58,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        size: isMobile ? 0.066 : 0.072,
+        sizeAttenuation: true,
+        vertexColors: true,
+      });
+
+      const sparkle = new THREE.Points(sparkleGeo, sparkleMat);
+      sparkle.frustumCulled = false;
+      sparkle.renderOrder = 30;
+      heart.add(sparkle);
+
+      window.__HEART_DEBUG__ = { heartFill, heartEdge, outerDust, sparkle };
+
+      // ---------- Heartbeat outward offsets ----------
+      const OUTWARD_MAX = {
+        outerDust: isMobile ? 3.2 : 4.2,
+        fill: isMobile ? 6.0 : 8.0,
+        edge: 2.2,
+        sparkle: 2.6,
+      };
+
+      function buildOutwardAttributes({ count, baseDir, rotDir, amp, outwardMax }) {
+        const aBaseDir = new Float32Array(count * 2);
+        const aRotDir = new Float32Array(count * 2);
+        const aAmp = new Float32Array(count);
+
+        for (let i = 0; i < count; i++) {
+          aBaseDir[i * 2 + 0] = baseDir[i * 2 + 0];
+          aBaseDir[i * 2 + 1] = baseDir[i * 2 + 1];
+          aRotDir[i * 2 + 0] = rotDir[i * 2 + 0];
+          aRotDir[i * 2 + 1] = rotDir[i * 2 + 1];
+          aAmp[i] = amp[i] * outwardMax;
+        }
+
+        return { aBaseDir, aRotDir, aAmp };
+      }
+
+      const outwardAttrsFill = buildOutwardAttributes({
+        count: heartFillCount,
+        baseDir: heartFillDir,
+        rotDir: heartFillRotDir,
+        amp: heartFillAmp,
+        outwardMax: OUTWARD_MAX.fill,
+      });
+      heartFillGeo.setAttribute("aBaseDir", new THREE.BufferAttribute(outwardAttrsFill.aBaseDir, 2));
+      heartFillGeo.setAttribute("aRotDir", new THREE.BufferAttribute(outwardAttrsFill.aRotDir, 2));
+      heartFillGeo.setAttribute("aAmp", new THREE.BufferAttribute(outwardAttrsFill.aAmp, 1));
+
+      const outwardAttrsEdge = buildOutwardAttributes({
+        count: edgePoints.length,
+        baseDir: heartEdgeOutDir,
+        rotDir: heartEdgeRotDir,
+        amp: heartEdgeAmp,
+        outwardMax: OUTWARD_MAX.edge,
+      });
+      heartEdgeGeo.setAttribute("aBaseDir", new THREE.BufferAttribute(outwardAttrsEdge.aBaseDir, 2));
+      heartEdgeGeo.setAttribute("aRotDir", new THREE.BufferAttribute(outwardAttrsEdge.aRotDir, 2));
+      heartEdgeGeo.setAttribute("aAmp", new THREE.BufferAttribute(outwardAttrsEdge.aAmp, 1));
+
+      const outwardAttrsOuterDust = buildOutwardAttributes({
+        count: outerDustCount,
+        baseDir: outerDustDir,
+        rotDir: outerDustRotDir,
+        amp: outerDustAmp,
+        outwardMax: OUTWARD_MAX.outerDust,
+      });
+      outerDustGeo.setAttribute("aBaseDir", new THREE.BufferAttribute(outwardAttrsOuterDust.aBaseDir, 2));
+      outerDustGeo.setAttribute("aRotDir", new THREE.BufferAttribute(outwardAttrsOuterDust.aRotDir, 2));
+      outerDustGeo.setAttribute("aAmp", new THREE.BufferAttribute(outwardAttrsOuterDust.aAmp, 1));
+
+      const outwardAttrsSparkle = buildOutwardAttributes({
+        count: sparkleCount,
+        baseDir: sparkleOutDir,
+        rotDir: sparkleRotDir,
+        amp: sparkleAmp,
+        outwardMax: OUTWARD_MAX.sparkle,
+      });
+      sparkleGeo.setAttribute("aBaseDir", new THREE.BufferAttribute(outwardAttrsSparkle.aBaseDir, 2));
+      sparkleGeo.setAttribute("aRotDir", new THREE.BufferAttribute(outwardAttrsSparkle.aRotDir, 2));
+      sparkleGeo.setAttribute("aAmp", new THREE.BufferAttribute(outwardAttrsSparkle.aAmp, 1));
+
+      const DIR_MIX_MAX = 0.85;
+
+      function enableOutwardDisplacement(material, outwardUniform, dirMixMaxUniform) {
+        material.onBeforeCompile = (shader) => {
+          shader.uniforms.uOutward = outwardUniform;
+          shader.uniforms.uDirMixMax = dirMixMaxUniform;
+
+          shader.vertexShader = `\nattribute vec2 aBaseDir;\nattribute vec2 aRotDir;\nattribute float aAmp;\nuniform float uOutward;\nuniform float uDirMixMax;\n` + shader.vertexShader;
+
+          shader.vertexShader = shader.vertexShader.replace(
+            "#include <begin_vertex>",
+            `#include <begin_vertex>\nvec2 d = normalize(mix(aBaseDir, aRotDir, uDirMixMax * uOutward));\ntransformed.xy += d * (aAmp * uOutward);`
+          );
+        };
+
+        material.customProgramCacheKey = () => "outwardDisplacement-v4";
+        material.needsUpdate = true;
+      }
+
+      const uDirMixMax = { value: DIR_MIX_MAX };
+
+      const uOutwardFill = { value: 0 };
+      const uOutwardEdge = { value: 0 };
+      const uOutwardOuterDust = { value: 0 };
+      const uOutwardSparkle = { value: 0 };
+
+      enableOutwardDisplacement(heartGlowMat, uOutwardFill, uDirMixMax);
+      enableOutwardDisplacement(heartFillMat, uOutwardFill, uDirMixMax);
+      enableOutwardDisplacement(heartEdgeMat, uOutwardEdge, uDirMixMax);
+      enableOutwardDisplacement(outerDustMat, uOutwardOuterDust, uDirMixMax);
+      enableOutwardDisplacement(sparkleMat, uOutwardSparkle, uDirMixMax);
+
+      const textScene = new THREE.Scene();
+      renderer.autoClear = false;
+
+      // ---------- Center Text (always readable; no bloom) ----------
+      function canvasToTexture(canvas) {
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+        return tex;
+      }
+
+      function makeHandTextCanvas({ lines, w, h, mode }) {
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, w, h);
+        ctx.imageSmoothingEnabled = true;
+
+        const cx = w * 0.5;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+
+        const fontFamily = "\"DFKai-SB\", \"KaiTi\", \"STKaiti\", \"YuKyokasho\", \"Noto Sans TC\", \"PingFang TC\", \"Microsoft JhengHei\", system-ui, sans-serif";
+        const y0 = h * 0.36;
+        const y1 = h * 0.74;
+
+        function drawWhite(text, y, size) {
+          if (!text) return;
+          ctx.font = `650 ${size}px ${fontFamily}`;
+
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = size * 0.010;
+          ctx.shadowColor = "rgba(0,0,0,0.55)";
+          ctx.shadowBlur = size * 0.060;
+
+          ctx.strokeStyle = "rgba(12,22,40,0.55)";
+          ctx.lineWidth = size * 0.030;
+          ctx.strokeText(text, cx, y);
+
+          ctx.fillStyle = "#fff";
+          ctx.fillText(text, cx, y);
+
+          ctx.shadowBlur = 0;
+          ctx.shadowColor = "rgba(0,0,0,0)";
+        }
+
+        function drawGreenOutline(text, y, size) {
+          if (!text) return;
+          ctx.font = `650 ${size}px ${fontFamily}`;
+
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+          ctx.shadowColor = "rgba(80,255,150,0.70)";
+          ctx.shadowBlur = size * 0.16;
+
+          ctx.strokeStyle = "rgba(80,255,150,0.70)";
+          ctx.lineWidth = size * 0.12;
+          ctx.strokeText(text, cx, y);
+
+          ctx.shadowBlur = 0;
+          ctx.shadowColor = "rgba(0,0,0,0)";
+        }
+
+        if (mode === "greenOutline") {
+          drawGreenOutline(lines[0] || "", y0, 300);
+          drawGreenOutline(lines[1] || "", y1, 270);
+          return canvas;
+        }
+
+        drawWhite(lines[0] || "", y0, 300);
+        drawWhite(lines[1] || "", y1, 270);
+        return canvas;
+      }
+
+      const TEXT_CANVAS_W = 2048;
+      const TEXT_CANVAS_H = 1024;
+      const TEXT_LINES = ["陳巧恩", "新年快樂"];
+
+      const whiteCanvas = makeHandTextCanvas({ lines: TEXT_LINES, w: TEXT_CANVAS_W, h: TEXT_CANVAS_H, mode: "white" });
+      const greenOutlineCanvas = makeHandTextCanvas({ lines: TEXT_LINES, w: TEXT_CANVAS_W, h: TEXT_CANVAS_H, mode: "greenOutline" });
+
+      const whiteTex = canvasToTexture(whiteCanvas);
+      const greenOutlineTex = canvasToTexture(greenOutlineCanvas);
+
+      const whiteSpriteMat = new THREE.SpriteMaterial({
+        map: whiteTex,
+        transparent: true,
+        opacity: 1.0,
+        alphaTest: 0.02,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.NormalBlending,
+        toneMapped: false,
+      });
+
+      const greenSpriteMat = new THREE.SpriteMaterial({
+        map: greenOutlineTex,
+        transparent: true,
+        opacity: 0.70,
+        alphaTest: 0.01,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+
+      const whiteSprite = new THREE.Sprite(whiteSpriteMat);
+      const greenSprite = new THREE.Sprite(greenSpriteMat);
+
+      const textZ = 0.35;
+      whiteSprite.position.set(0, 0.06, textZ);
+      greenSprite.position.set(0, 0.06, textZ + 0.001);
+
+      const textHeight = isMobile ? 0.76 : 0.86;
+      const textAspect = whiteCanvas.width / whiteCanvas.height;
+      whiteSprite.scale.set(textHeight * textAspect, textHeight, 1);
+      greenSprite.scale.copy(whiteSprite.scale);
+
+      whiteSprite.renderOrder = 120;
+      greenSprite.renderOrder = 130;
+
+      textScene.add(whiteSprite);
+      textScene.add(greenSprite);
+
+      // ---------- Animation ----------
+      const clock = new THREE.Clock();
+
+      const HEARTBEAT = {
+        PERIOD: 1.45,
+
+        LUB_MU: 0.11,
+        LUB_RISE: 0.030,
+        LUB_DECAY: 0.075,
+        LUB_GAIN: 1.20,
+
+        DUB_MU: 0.26,
+        DUB_RISE: 0.040,
+        DUB_DECAY: 0.095,
+        DUB_GAIN: 0.78,
+
+        OUTWARD_POW: 0.75,
+      };
+
+      function smoothstep01(v) { return v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v); }
+
+      function spike(x, mu, rise, decay) {
+        const r = smoothstep01((x - (mu - rise)) / rise);
+        const d = Math.exp(-Math.max(0, x - mu) / decay);
+        return r * d;
+      }
+
+      function computePulse(t) {
+        const x = (t % HEARTBEAT.PERIOD) / HEARTBEAT.PERIOD;
+        const lub = spike(x, HEARTBEAT.LUB_MU, HEARTBEAT.LUB_RISE, HEARTBEAT.LUB_DECAY);
+        const dub = spike(x, HEARTBEAT.DUB_MU, HEARTBEAT.DUB_RISE, HEARTBEAT.DUB_DECAY);
+        const kick = Math.min(1, HEARTBEAT.LUB_GAIN * lub + HEARTBEAT.DUB_GAIN * dub);
+        const outward = Math.pow(kick, HEARTBEAT.OUTWARD_POW);
+        return { kick, outward };
+      }
+
+      let didMarkOk = false;
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        if (!didMarkOk) {
+          didMarkOk = true;
+          window.__HEART_OK__ = true;
+          hideOverlay();
+        }
+
+        const t = clock.getElapsedTime();
+
+        // 心跳：中心固定，粒子向外擴散（不使用 group scale 做 pulse）
+        const { kick, outward } = computePulse(t);
+
+        uOutwardFill.value = outward;
+        uOutwardEdge.value = outward;
+        uOutwardOuterDust.value = outward;
+        uOutwardSparkle.value = outward;
+
+        const breath = 0.03 * Math.sin(t * 0.9);
+        bloomPass.strength = BLOOM.strength * THREE.MathUtils.clamp(0.86 + 0.20 * kick + breath, 0.76, 1.02);
+
+        for (let i = 0; i < sparkleCount; i++) {
+          const ix = i * 3;
+          const blink = Math.pow(Math.max(0, Math.sin(t * sparkleSpeed[i] + sparklePhase[i])), 18);
+          const intensity = 0.02 + blink * 3.9;
+          sparkleCol[ix + 0] = sparkleTint[ix + 0] * intensity;
+          sparkleCol[ix + 1] = sparkleTint[ix + 1] * intensity;
+          sparkleCol[ix + 2] = sparkleTint[ix + 2] * intensity;
+        }
+        sparkleGeo.attributes.color.needsUpdate = true;
+
+        renderer.clear();
+        composer.render();
+        renderer.clearDepth();
+        renderer.render(textScene, camera);
+      }
+
+      animate();
+
+      // ---------- Resize ----------
+      window.addEventListener("resize", () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
+
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        camera.lookAt(0, 0, 0);
+
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(w, h);
+
+        composer.setPixelRatio(dpr * ppScale);
+        composer.setSize(w, h);
+        bloomPass.setSize(w, h);
+      }, { passive: true });
+    })().catch((err) => {
+      showOverlayError(window.__HEART_CDNS_TRIED__ || []);
+      appendOverlayErrorMessage(err);
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
